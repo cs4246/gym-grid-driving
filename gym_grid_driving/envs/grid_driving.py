@@ -11,13 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 Action = Enum('Action', 'stay up down')
-ACTIONS = [Action.stay, Action.up, Action.down]
-
 PlayerState = Enum('PlayerState', 'alive crashed finished out')
 
 Lane = namedtuple('Lane', ['cars', 'speed_range'])
 GridDrivingState = namedtuple('GridDrivingState', ['cars', 'player_pos', 'finish_pos'])
-
 
 
 DEFAULT_LANES = [
