@@ -97,12 +97,14 @@ class Rectangle(object):
 
 
 class Car(object):
-    def __init__(self, position, speed_range, world, circular=True, auto_brake=True, p=1.0):
+    def __init__(self, position, speed_range, world, circular=True, auto_brake=True, auto_lane=True, p=1.0, id=None):
+        self.id = id
         self.position = position
         self.speed_range = speed_range
         self.world = world
         self.bound = self.world.boundary.circular_bound if circular else lambda x, **kwargs: x
         self.auto_brake = auto_brake
+        self.auto_lane = auto_lane
         self.p = p
         self.done()
 
@@ -111,49 +113,67 @@ class Car(object):
             return np.round(np.average(self.speed_range))
         return np.random.randint(*tuple(np.array(self.speed_range)+np.array([0, 1])))
 
-    def start(self):
-        self.destination = self.bound(self.position + Point(self.sample_speed(), 0), bound_y=False)
+    def _start(self, **kwargs):
+        delta = kwargs.get('delta', Point(0, 0))
+        self.destination = self.bound(self.position + delta, bound_y=False)
+
+    def start(self, **kwargs):
+        self._start(delta=Point(self.sample_speed(), 0))
 
     def done(self):
         self.destination = None
 
-    def _step(self):
-        self.position = self.bound(self.position + Point(self.direction, 0), bound_y=False)
-
-    def step(self):
+    def _step(self, delta):
         if not self.destination:
             raise CarNotStartedException
         if not self.need_step():
             return
         if self.auto_brake and not self.can_step():
             return
-        self._step()
+
+        target = self.world.boundary.bound(self.bound(self.position + delta, bound_y=False), bound_x=False)
+
+        if self.auto_lane and target.y != self.lane and not self.can_change_lane(target):
+            return
+
+        self.position = target
+
+    def step(self, **kwargs):
+        self._step(Point(self.direction if self.destination.x != self.position.x else 0, np.sign(self.destination.y - self.position.y)))
 
     def need_step(self):
         return self.position != self.destination
 
     def can_step(self):
-        return self.world.lanes[self.position.y].gap(self)
+        return self.world.lanes[self.lane].gap(self)
+
+    def can_change_lane(self, target):
+        return len(filter(lambda c: c.position == target, self.world.lanes[target.y])) == 0
 
     @property
     def direction(self):
         return np.sign(self.speed_range[0])
 
+    @property
+    def lane(self):
+        return self.position.y
+    
     def __repr__(self):
-        return "Car({}, {})".format(self.position, self.speed_range)
+        return "Car({}, {}, {})".format(self.id, self.position, self.speed_range)
 
 
 class ActionableCar(Car):
-    def act(self, action):
+    def start(self, **kwargs):
+        action = kwargs.get('action', Action.stay)
         if action == Action.up:
-            dy = Point(0, -1)
+            dy = -1
         elif action == Action.down:
-            dy = Point(0, 1)
+            dy = 1
         elif action == Action.stay:
-            dy = Point(0, 0)
+            dy = 0
         else:
             raise ActionNotFoundException
-        self.position = self.world.boundary.bound(self.position + dy, bound_x=False)
+        self._start(delta=Point(self.sample_speed(), dy))
 
 
 class OrderedLane(object):
@@ -226,20 +246,25 @@ class World(object):
             self.lanes[car.position.y].append(car)
 
     def step(self, action=None):
-        self.agent.act(action)
-
-        self.reassign_lanes()
-
         for car in self.cars:
-            car.start()
+            if car == self.agent:
+                car.start(action=action)
+            else:
+                car.start()
 
         for i in range(self.max_dist_travel):
             occupancies = np.zeros((self.boundary.w, self.boundary.h))
             for lane in self.lanes:
                 for car in lane.ordered_cars:
+                    last_y = car.position.y
+
                     car.step()
+
                     if car != self.agent:
                         occupancies[car.position.x, car.position.y] = 1
+                        
+                    if last_y != car.position.y:
+                        self.reassign_lanes()
 
             if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
                 raise AgentCrashedException
@@ -311,12 +336,15 @@ class GridDrivingEnv(gym.Env):
 
     def reset(self):
         self.agent_state = AgentState.alive
-        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, p=self.p)
+        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
         self.cars = [self.agent]
+        i = 0
         for y, lane in enumerate(self.lanes):
-            xs = np.random.choice(range(self.width), lane.cars, replace=False)
+            choices = list(range(0, self.agent.position.x)) + list(range(self.agent.position.x+1, self.width)) if self.agent.lane == y else range(self.width)
+            xs = np.random.choice(choices, lane.cars, replace=False)
             for x in xs:
-                self.cars.append(Car(Point(x,y), lane.speed_range, self.world, p=self.p))
+                self.cars.append(ActionableCar(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
+                i += 1
         self.world.init(self.cars, agent=self.agent)
 
     def render(self, mode='human'):
@@ -324,7 +352,9 @@ class GridDrivingEnv(gym.Env):
             raise NotImplementedError
         cars = self.world.tensor[0, :, :]
         view = np.chararray(cars.shape, unicode=True, itemsize=2)
-        view[cars.nonzero()] = 'O'
+        for car in self.cars:
+            if car != self.agent:
+                view[car.position.tuple] = car.id or 'O'
         view[self.finish_position.tuple] += 'F'
         if self.boundary.contains(self.agent.position):
             if self.agent_state == AgentState.crashed:

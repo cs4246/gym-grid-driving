@@ -47,7 +47,7 @@ lanes = [
 ]
 
 env = gym.make('GridDriving-v0', lanes=lanes, width=8, 
-               agent_speed_range=(-1,0), finish_position=Point(0,1), agent_pos_init=Point(6,1),
+               agent_speed_range=(-1,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
                stochasticity=1.0, tensor_state=False)
 
 env.render()
@@ -58,7 +58,7 @@ env.render()
 * `lanes` accepts a list of `LaneSpec(cars, speed_range)` governing how each lanes should be, with `cars` being integer and `speed_range=[min, max]`, `min` and `max` should also be integer
 * `width` specifies the width of the simulator as expected
 * `agent_speed_range=[min, max]` 
-* Coordinate of the finisih point `finish_pos` 
+* Coordinate of the finisih point `finish_position` 
 * Coordinate of the agent initial position `agent_pos_init`
 * `Action` is an enum containing `[Action.stay, Action.up, Action.down]` which should be self explanatory
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
@@ -69,53 +69,47 @@ env.render()
 * To make the simulator deterministic, one just have to set the `stochasticity=0.0` or `min=max` in the `*speed_range`
 * Parking scenario is just a special case where `min=max=0` in the `car_speed_range`
 
-### Example output
+### Example output (default configuration)
 ```
-================================
-  O   -   O   -   -   -   -   -
-  F   -   -   -   O   -   <   O
-  O   -   -   O   -   -   -   O
-================================
-```
-
-#### Render every step (default configuration)
-```
-========================================
-  F   -   -   -   -   -   O   -   -   -
-  O   -   -   -   -   -   -   O   -   -
-  O   O   -   O   -   -   -   -   -   <
-========================================
-========================================
-  F   -   -   -   O   -   -   -   -   -
-  -   -   -   -   O   -   -   O   -   -
-  O   O   -   -   -   -   -   -   <   O
-========================================
-========================================
-  F   -   -   O   -   -   -   -   -   -
-  -   O   -   -   O   -   -   -   -   -
-  O   -   -   -   -   -   -   <   O   O
-========================================
-========================================
-  F   O   -   -   -   -   -   -   -   -
-  -   O   -   -   -   -   -   -   O   -
-  -   -   -   -   -   -   <   O   O   O
-========================================
 ========================================
  OF   -   -   -   -   -   -   -   -   -
-  -   -   -   -   -   O   -   -   O   -
-  -   -   -   -   -   <   O   O   O   -
+  -   -   -   -   -   1   -   -   -   2
+  -   5   -   -   -   3   4   -   -   <
 ========================================
-========================================
-  F   -   -   -   -   -   -   -   -   O
-  -   -   -   -  O#   -   -   O   -   -
-  -   -   -   -   -   O   O   O   -   -
-========================================
+```
+
+#### Render every step
+```
+Start
+================================
+  1   -   O   -   -   -   -   -
+  F   -   -   2   -   -   <   3
+  -   5   6   -   -   4   -   -
+================================
+Action.down
+================================
+  -   O   -   -   -   -   -   1
+  F   -   2   -   -   3   -   -
+  -   6   -   4   -   <   -   5
+================================
+Action.stay
+================================
+  O   -   -   -   -   -   1   -
+  F   2   -   -   3   -   -   -
+  4   -   -   -   <   5   -   6
+================================
+Action.up
+================================
+  -   -   -   -   -   1   -   O
+ 2F   -   -  3#   -   -   -   -
+  -   -   -   -   5   -   6   4
+================================
 ```
 
 #### Legend
 
 * `<`: Agent
 * `F`: Finish point
-* `O`: Car
+* `Integer`: Car
 * `#`: Crashed agent
 * `-`: Empty road
