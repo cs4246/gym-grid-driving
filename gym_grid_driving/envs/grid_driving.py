@@ -172,7 +172,7 @@ class Action(object):
         self.delta = delta
 
     def __str__(self):
-        return "{} - {}".format(self.name, self.delta)
+        return "{}".format(self.name)
 
     def __repr__(self):
         return self.__str__()
@@ -288,14 +288,16 @@ class World(object):
             if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
                 raise AgentCrashedException
 
+            # Handle car jump pass through finish
+            if self.agent and self.finish_position and self.agent.position == self.finish_position:
+                raise AgentFinishedException
+
             self.total_occupancies += occupancies
 
         if self.agent and self.total_occupancies[self.agent.position.x, self.agent.position.y] > 0:
                 raise AgentCrashedException
         if self.agent and not self.boundary.contains(self.agent.position):
             raise AgentOutOfBoundaryException
-        if self.agent and self.finish_position and self.agent.position == self.finish_position:
-            raise AgentFinishedException
 
         for car in self.cars:
             car.done()
