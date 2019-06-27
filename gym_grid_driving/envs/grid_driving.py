@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 random = np.random.RandomState()
 
 
-Action = Enum('Action', 'stay up down')
 AgentState = Enum('AgentState', 'alive crashed finished out')
 
 LaneSpec = namedtuple('LaneSpec', ['cars', 'speed_range'])
@@ -167,19 +166,22 @@ class Car(object):
         return "Car({}, {}, {})".format(self.id, self.position, self.speed_range)
 
 
+class Action(object):
+    def __init__(self, name, delta):
+        self.name = name
+        self.delta = delta
+
+    def __str__(self):
+        return "{} - {}".format(self.name, self.delta)
+
+    def __repr__(self):
+        return self.__str__()
+
+
 class ActionableCar(Car):
     def start(self, **kwargs):
-        action = kwargs.get('action', Action.stay)
-        if action == Action.up:
-            dy = -1
-        elif action == Action.down:
-            dy = 1
-        elif action == Action.stay:
-            dy = 0
-        else:
-            raise ActionNotFoundException
-        self._start(delta=Point(self.sample_speed(), dy))
-
+        action = kwargs.get('action')
+        self._start(delta=action.delta)
         self.ignored = self.changed_lane
 
 
@@ -282,6 +284,10 @@ class World(object):
                     if last_y != car.position.y:
                         self.reassign_lanes()
 
+            # Handle car jump pass through other car
+            if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
+                raise AgentCrashedException
+
             self.total_occupancies += occupancies
 
         if self.agent and self.total_occupancies[self.agent.position.x, self.agent.position.y] > 0:
@@ -328,6 +334,11 @@ class GridDrivingEnv(gym.Env):
         self.boundary = Rectangle(self.width, len(self.lanes))
         self.world = World(self.boundary, finish_position=self.finish_position)
 
+        agent_direction = np.sign(self.agent_speed_range[0])
+        self.actions = [Action('up', Point(agent_direction,-1)), Action('down', Point(agent_direction,1))]
+        self.actions += [Action('forward[{}]'.format(i), Point(i, 0)) 
+                            for i in range(self.agent_speed_range[0], self.agent_speed_range[1]+1)]
+
         self.reset()
 
     def step(self, action):
@@ -366,7 +377,7 @@ class GridDrivingEnv(gym.Env):
             choices = list(range(0, self.agent.position.x)) + list(range(self.agent.position.x+1, self.width)) if self.agent.lane == y else range(self.width)
             xs = random.choice(choices, lane.cars, replace=False)
             for x in xs:
-                self.cars.append(ActionableCar(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
+                self.cars.append(Car(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
                 i += 1
         self.world.init(self.cars, agent=self.agent)
 
@@ -374,7 +385,7 @@ class GridDrivingEnv(gym.Env):
         if mode != 'human':
             raise NotImplementedError
         cars = self.world.tensor[0, :, :]
-        view = np.chararray(cars.shape, unicode=True, itemsize=2)
+        view = np.chararray(cars.shape, unicode=True, itemsize=3)
         view[self.world.total_occupancies.nonzero()] = '~'
         for car in self.cars:
             if car != self.agent:

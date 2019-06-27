@@ -23,13 +23,12 @@ env = gym.make('GridDriving-v0')
 
 Example:
 ```
-from gym_grid_driving.envs.grid_driving import Action
 import numpy as np
 
 env.reset()
 for i in range(12):
     env.render()
-    state, reward, done, info = env.step(np.random.choice(Action))
+    state, reward, done, info = env.step(np.random.choice(env.actions))
 ```
 
 ## Configuration
@@ -38,7 +37,7 @@ for i in range(12):
 ```
 import gym
 import gym_grid_driving
-from gym_grid_driving.envs.grid_driving import Action, LaneSpec, Point
+from gym_grid_driving.envs.grid_driving import LaneSpec, Point
 
 lanes = [
     LaneSpec(2, [-1, -1]),
@@ -47,8 +46,10 @@ lanes = [
 ]
 
 env = gym.make('GridDriving-v0', lanes=lanes, width=8, 
-               agent_speed_range=(-1,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
+               agent_speed_range=(-3,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
                stochasticity=1.0, tensor_state=False, random_seed=13)
+
+actions = env.actions
 
 env.render()
 ```
@@ -57,18 +58,18 @@ env.render()
 
 * `lanes` accepts a list of `LaneSpec(cars, speed_range)` governing how each lanes should be, with `cars` being integer and `speed_range=[min, max]`, `min` and `max` should also be integer
 * `width` specifies the width of the simulator as expected
-* `agent_speed_range=[min, max]` 
+* `agent_speed_range=[min, max]` is the agent speed range which affects the available actions
 * Coordinate of the finisih point `finish_position` 
 * Coordinate of the agent initial position `agent_pos_init`
-* `Action` is an enum containing `[Action.stay, Action.up, Action.down]` which should be self explanatory
+* `env.actions` is an enum containing all available actions which would change depending on the `agent_speed_range`
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
 * `tensor_state` whether to output state as 4D tensor `[cars, agent, finish_position, occupancy_trails]`
 * `random_seed` to make the environment reproducible
 
 **Notes:** 
 
-* To make the simulator deterministic, one just have to set the `stochasticity=0.0` or `min=max` in the `*speed_range`
-* Parking scenario is just a special case where `min=max=0` in the `car_speed_range`
+* To make the simulator deterministic, one just have to set the `stochasticity=0.0` or `min=max` in the car `speed_range`
+* Parking scenario is just a special case where `min=max=0` in the car `speed_range`
 
 ### Example output (default configuration)
 ```
