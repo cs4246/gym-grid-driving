@@ -107,6 +107,7 @@ class Car(object):
         self.auto_lane = auto_lane
         self.p = p
         self.done()
+        self.ignored = False
 
     def sample_speed(self):
         if np.random.random() > self.p:
@@ -115,7 +116,8 @@ class Car(object):
 
     def _start(self, **kwargs):
         delta = kwargs.get('delta', Point(0, 0))
-        self.destination = self.bound(self.position + delta, bound_y=False)
+        self.destination = self.world.boundary.bound(self.bound(self.position + delta, bound_y=False), bound_x=False)
+        self.changed_lane = self.destination.y != self.position.y
 
     def start(self, **kwargs):
         self._start(delta=Point(self.sample_speed(), 0))
@@ -175,6 +177,8 @@ class ActionableCar(Car):
             raise ActionNotFoundException
         self._start(delta=Point(self.sample_speed(), dy))
 
+        self.ignored = self.changed_lane
+
 
 class OrderedLane(object):
     def __init__(self, world, cars=None):
@@ -192,9 +196,15 @@ class OrderedLane(object):
 
     def sort(self):
         self.cars = sorted(self.cars, key=lambda car: car.position.x, reverse=self.reverse)
+        self.recognize()
+
+    def recognize(self):
+        self.cars_recognized = [car for car in self.cars if not car.ignored]
 
     def front(self, car):
-        return self.cars[self.cars.index(car) - 1]
+        if car not in self.cars_recognized: # car is ignored
+            return self.cars[self.cars.index(car) - 1]
+        return self.cars_recognized[self.cars_recognized.index(car) - 1]
 
     def gap(self, car):
         pos = [car.position.x, self.front(car).position.x][::-1 if self.reverse else 1]
@@ -234,6 +244,7 @@ class World(object):
         self.lanes = [OrderedLane(self) for i in range(self.boundary.h)]
         for car in cars:
             self.lanes[car.position.y].append(car)
+        self.total_occupancies = np.zeros((self.boundary.w, self.boundary.h))
 
     def reassign_lanes(self):
         unassigned_cars = []
@@ -249,9 +260,11 @@ class World(object):
         for car in self.cars:
             if car == self.agent:
                 car.start(action=action)
+                self.lanes[car.lane].recognize()
             else:
                 car.start()
 
+        self.total_occupancies = np.zeros((self.boundary.w, self.boundary.h))
         for i in range(self.max_dist_travel):
             occupancies = np.zeros((self.boundary.w, self.boundary.h))
             for lane in self.lanes:
@@ -266,19 +279,21 @@ class World(object):
                     if last_y != car.position.y:
                         self.reassign_lanes()
 
-            if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
+            self.total_occupancies += occupancies
+
+        if self.agent and self.total_occupancies[self.agent.position.x, self.agent.position.y] > 0:
                 raise AgentCrashedException
-            if self.agent and not self.boundary.contains(self.agent.position):
-                raise AgentOutOfBoundaryException
-            if self.agent and self.finish_position and self.agent.position == self.finish_position:
-                raise AgentFinishedException
+        if self.agent and not self.boundary.contains(self.agent.position):
+            raise AgentOutOfBoundaryException
+        if self.agent and self.finish_position and self.agent.position == self.finish_position:
+            raise AgentFinishedException
 
         for car in self.cars:
             car.done()
 
     @property
     def tensor(self):
-        t = np.zeros((3, self.boundary.w, self.boundary.h))
+        t = np.zeros((4, self.boundary.w, self.boundary.h))
         for car in self.cars:
             if self.agent and car != self.agent:
                 t[0, car.position.x, car.position.y] = 1
@@ -286,6 +301,7 @@ class World(object):
             t[1, self.agent.position.x, self.agent.position.y] = 1
         if self.finish_position:
             t[2, self.finish_position.x, self.finish_position.y] = 1
+        t[3, :, :] = self.total_occupancies
         return t
 
 
@@ -352,6 +368,7 @@ class GridDrivingEnv(gym.Env):
             raise NotImplementedError
         cars = self.world.tensor[0, :, :]
         view = np.chararray(cars.shape, unicode=True, itemsize=2)
+        view[self.world.total_occupancies.nonzero()] = '~'
         for car in self.cars:
             if car != self.agent:
                 view[car.position.tuple] = car.id or 'O'
