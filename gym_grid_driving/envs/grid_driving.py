@@ -10,6 +10,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+random = np.random.RandomState()
+
+
 Action = Enum('Action', 'stay up down')
 AgentState = Enum('AgentState', 'alive crashed finished out')
 
@@ -110,9 +113,9 @@ class Car(object):
         self.ignored = False
 
     def sample_speed(self):
-        if np.random.random() > self.p:
+        if random.random_sample() > self.p:
             return np.round(np.average(self.speed_range))
-        return np.random.randint(*tuple(np.array(self.speed_range)+np.array([0, 1])))
+        return random.randint(*tuple(np.array(self.speed_range)+np.array([0, 1])))
 
     def _start(self, **kwargs):
         delta = kwargs.get('delta', Point(0, 0))
@@ -310,6 +313,8 @@ class GridDrivingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, **kwargs):
+        self.random_seed = kwargs.get('random_seed', None)
+
         self.lanes = kwargs.get('lanes', DefaultConfig.LANES)
         self.width = kwargs.get('width', DefaultConfig.WIDTH)
 
@@ -351,13 +356,15 @@ class GridDrivingEnv(gym.Env):
         return self.state, reward, self.done, {}
 
     def reset(self):
+        if self.random_seed:
+            random.seed(self.random_seed)
         self.agent_state = AgentState.alive
         self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
         self.cars = [self.agent]
         i = 0
         for y, lane in enumerate(self.lanes):
             choices = list(range(0, self.agent.position.x)) + list(range(self.agent.position.x+1, self.width)) if self.agent.lane == y else range(self.width)
-            xs = np.random.choice(choices, lane.cars, replace=False)
+            xs = random.choice(choices, lane.cars, replace=False)
             for x in xs:
                 self.cars.append(ActionableCar(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
                 i += 1

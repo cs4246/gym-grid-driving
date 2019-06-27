@@ -48,7 +48,7 @@ lanes = [
 
 env = gym.make('GridDriving-v0', lanes=lanes, width=8, 
                agent_speed_range=(-1,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
-               stochasticity=1.0, tensor_state=False)
+               stochasticity=1.0, tensor_state=False, random_seed=13)
 
 env.render()
 ```
@@ -62,7 +62,8 @@ env.render()
 * Coordinate of the agent initial position `agent_pos_init`
 * `Action` is an enum containing `[Action.stay, Action.up, Action.down]` which should be self explanatory
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
-* `tensor_state` whether to output state as 3D tensor `[cars, agent, finish_position]`
+* `tensor_state` whether to output state as 4D tensor `[cars, agent, finish_position, occupancy_trails]`
+* `random_seed` to make the environment reproducible
 
 **Notes:** 
 
@@ -72,38 +73,74 @@ env.render()
 ### Example output (default configuration)
 ```
 ========================================
- OF   -   -   -   -   -   -   -   -   -
-  -   -   -   -   -   1   -   -   -   2
-  -   5   -   -   -   3   4   -   -   <
+  F   -   -   -   -   O   -   -   -   -
+  -   -   2   1   -   -   -   -   -   -
+  -   -   4   3   -   -   -   5   -   <
 ========================================
 ```
 
 #### Render every step
 ```
 Start
-================================
-  1   -   O   -   -   -   -   -
-  F   -   -   2   -   -   <   3
-  -   5   6   -   -   4   -   -
-================================
-Action.down
-================================
-  -   O   -   -   -   -   -   1
-  F   -   2   -   -   3   -   -
-  -   6   -   4   -   <   -   5
-================================
-Action.stay
-================================
-  O   -   -   -   -   -   1   -
-  F   2   -   -   3   -   -   -
-  4   -   -   -   <   5   -   6
-================================
+========================================
+  F   -   O   -   -   -   -   -   -   -
+  -   -   -   -   -   2   -   -   1   -
+  -   -   4   5   3   -   -   -   -   <
+========================================
 Action.up
-================================
-  -   -   -   -   -   1   -   O
- 2F   -   -  3#   -   -   -   -
-  -   -   -   -   5   -   6   4
-================================
+========================================
+ OF   ~   -   -   -   -   -   -   -   -
+  -   -   2   ~   ~   1   ~   ~   <   -
+  4   5   3   ~   -   -   -   -   -   -
+========================================
+Action.up
+========================================
+  F   -   -   -   -   -   -   <   -   O
+  ~   ~   1   ~   ~   -   -   -   -   2
+  ~   3   -   -   -   -   -   -   4   5
+========================================
+Action.stay
+========================================
+  F   -   -   -   -   -   <   O   ~   -
+  ~   ~   -   -   -   -   2   ~   ~   1
+  ~   -   -   -   -   -   -   4   5   3
+========================================
+Action.up
+========================================
+  F   -   -   -   -   <   O   -   -   -
+  -   -   -   2   ~   ~   1   ~   ~   -
+  -   -   -   -   -   4   5   3   ~   -
+========================================
+Action.up
+========================================
+  F   -   -   -   <   O   -   -   -   -
+  2   ~   ~   1   ~   ~   -   -   -   -
+  -   -   4   ~   ~   5   3   -   -   -
+========================================
+Action.up
+========================================
+  F   -   -   <   O   -   -   -   -   -
+  1   ~   ~   -   -   -   -   2   ~   ~
+  4   ~   -   5   ~   3   -   -   -   -
+========================================
+Action.stay
+========================================
+  F   -   <   O   -   -   -   -   -   -
+  -   -   -   -   2   ~   ~   1   ~   ~
+  5   ~   ~   -   3   -   -   -   -   4
+========================================
+Action.stay
+========================================
+  F   <   O   -   -   -   -   -   -   -
+  -   2   ~   ~   1   ~   ~   -   -   -
+  -   3   ~   ~   -   -   -   -   4   5
+========================================
+Action.down
+========================================
+  F   O   -   -   -   -   -   -   -   -
+ ~#   1   ~   ~   -   -   -   -   2   ~
+  3   -   -   -   -   -   -   4   5   -
+========================================
 ```
 
 #### Legend
@@ -113,3 +150,4 @@ Action.up
 * `Integer`: Car
 * `#`: Crashed agent
 * `-`: Empty road
+* `~`: Occupancy trails
