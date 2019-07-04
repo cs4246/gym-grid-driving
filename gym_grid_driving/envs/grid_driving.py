@@ -318,10 +318,10 @@ class World(object):
         assert t.shape == self.space(pytorch).shape
         return t
 
-    def space(self, pytorch=True):
+    def space(self, pytorch=True, channel=True):
         c, w, h = self.tensor_shape
         tensor_shape = (c, h, w) if pytorch else self.tensor_shape
-        return spaces.Box(low=0, high=1, shape=tensor_shape, dtype=np.uint8)
+        return spaces.Box(low=0, high=1, shape=tensor_shape[int(not channel):], dtype=np.uint8)
 
     @property
     def tensor_shape(self):
@@ -360,10 +360,10 @@ class GridDrivingEnv(gym.Env):
         else:
             n_cars = sum([l.cars for l in self.lanes])
             self.observation_space = spaces.Dict({
-                'cars': spaces.Tuple(tuple([self.world.space() for i in range(n_cars)])),
-                'agent_pos': self.world.space(), 
-                'finish_pos': self.world.space(), 
-                'occupancy_trails': self.world.space()
+                'cars': spaces.Tuple(tuple([self.world.space(channel=False) for i in range(n_cars)])),
+                'agent_pos': self.world.space(channel=False), 
+                'finish_pos': self.world.space(channel=False), 
+                'occupancy_trails': spaces.MultiBinary(self.world.space(channel=False).shape)
             })
 
         self.reset()
