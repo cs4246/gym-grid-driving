@@ -383,6 +383,13 @@ class GridDrivingEnv(gym.Env):
                 i += 1
         self.world.init(self.cars, agent=self.agent)
 
+        if self.tensor_state:
+            self.state = self.world.tensor
+        else:
+            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position)
+
+        return self.state
+
     def render(self, mode='human'):
         if mode != 'human':
             raise NotImplementedError

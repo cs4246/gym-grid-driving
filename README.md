@@ -25,7 +25,7 @@ Example:
 ```
 import numpy as np
 
-env.reset()
+state = env.reset()
 for i in range(12):
     env.render()
     state, reward, done, info = env.step(np.random.choice(env.actions))
