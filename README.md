@@ -62,8 +62,9 @@ env.render()
 * Coordinate of the finisih point `finish_position` 
 * Coordinate of the agent initial position `agent_pos_init`
 * `env.actions` is an enum containing all available actions which would change depending on the `agent_speed_range`
+* `env.action_space` is the OpenAI gym action space that can be sampled, with the definitions defined in `env.actions`
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
-* `tensor_state` whether to output state as 4D tensor `[cars, agent, finish_position, occupancy_trails]`
+* `tensor_state` whether to output state as 3D tensor `[channel, height, width]` with `channel=[cars, agent, finish_position, occupancy_trails]`
 * `random_seed` to make the environment reproducible
 
 **Notes:** 

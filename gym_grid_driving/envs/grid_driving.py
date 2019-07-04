@@ -1,6 +1,7 @@
 import gym
 from gym import error, spaces, utils
 from gym.utils import seeding
+from gym import spaces
 
 import numpy as np
 from collections import namedtuple
@@ -10,13 +11,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-random = np.random.RandomState()
+random = None
 
 
 AgentState = Enum('AgentState', 'alive crashed finished out')
 
 LaneSpec = namedtuple('LaneSpec', ['cars', 'speed_range'])
-GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent_pos', 'finish_pos'])
+GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent_pos', 'finish_pos', 'occupancy_trails'])
 
 
 class Constant:
@@ -292,7 +293,7 @@ class World(object):
             if self.agent and self.finish_position and self.agent.position == self.finish_position:
                 raise AgentFinishedException
 
-            self.total_occupancies += occupancies
+            self.total_occupancies = np.clip(self.total_occupancies + occupancies, 0, 1)
 
         if self.agent and self.total_occupancies[self.agent.position.x, self.agent.position.y] > 0:
                 raise AgentCrashedException
@@ -302,9 +303,8 @@ class World(object):
         for car in self.cars:
             car.done()
 
-    @property
-    def tensor(self):
-        t = np.zeros((4, self.boundary.w, self.boundary.h))
+    def as_tensor(self, pytorch=True):
+        t = np.zeros(self.tensor_shape)
         for car in self.cars:
             if self.agent and car != self.agent:
                 t[0, car.position.x, car.position.y] = 1
@@ -313,12 +313,25 @@ class World(object):
         if self.finish_position:
             t[2, self.finish_position.x, self.finish_position.y] = 1
         t[3, :, :] = self.total_occupancies
+        if pytorch:
+            t = np.transpose(t, (0, 2, 1)) # [C, H, W]
+        assert t.shape == self.space(pytorch).shape
         return t
+
+    def space(self, pytorch=True):
+        c, w, h = self.tensor_shape
+        tensor_shape = (c, h, w) if pytorch else self.tensor_shape
+        return spaces.Box(low=0, high=1, shape=tensor_shape, dtype=np.uint8)
+
+    @property
+    def tensor_shape(self):
+        return (4, self.boundary.w, self.boundary.h)
 
 
 
 class GridDrivingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
+    reward_range = (0, Constant.FINISH_REWARD)
 
     def __init__(self, **kwargs):
         self.random_seed = kwargs.get('random_seed', None)
@@ -341,9 +354,30 @@ class GridDrivingEnv(gym.Env):
         self.actions += [Action('forward[{}]'.format(i), Point(i, 0)) 
                             for i in range(self.agent_speed_range[0], self.agent_speed_range[1]+1)]
 
+        self.action_space = spaces.Discrete(len(self.actions))
+        if self.tensor_state:
+            self.observation_space = self.world.space()
+        else:
+            n_cars = sum([l.cars for l in self.lanes])
+            self.observation_space = spaces.Dict({
+                'cars': spaces.Tuple(tuple([self.world.space() for i in range(n_cars)])),
+                'agent_pos': self.world.space(), 
+                'finish_pos': self.world.space(), 
+                'occupancy_trails': self.world.space()
+            })
+
         self.reset()
 
+    def seed(self, seed=None):
+        global random
+        random, seed = seeding.np_random(seed)
+        return [seed]
+
     def step(self, action):
+        if isinstance(action, int):
+            assert action in range(len(self.actions))
+            action = self.actions[action]
+
         reward = 0
 
         if self.done:
@@ -362,15 +396,14 @@ class GridDrivingEnv(gym.Env):
             reward = Constant.FINISH_REWARD
 
         if self.tensor_state:
-            self.state = self.world.tensor
+            self.state = self.world.as_tensor()
         else:
-            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position)
+            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.world.total_occupancies)
 
         return self.state, reward, self.done, {}
 
     def reset(self):
-        if self.random_seed:
-            random.seed(self.random_seed)
+        self.seed(self.random_seed)
         self.agent_state = AgentState.alive
         self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
         self.cars = [self.agent]
@@ -384,16 +417,16 @@ class GridDrivingEnv(gym.Env):
         self.world.init(self.cars, agent=self.agent)
 
         if self.tensor_state:
-            self.state = self.world.tensor
+            self.state = self.world.as_tensor()
         else:
-            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position)
+            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.world.total_occupancies)
 
         return self.state
 
     def render(self, mode='human'):
         if mode != 'human':
             raise NotImplementedError
-        cars = self.world.tensor[0, :, :]
+        cars = self.world.as_tensor(pytorch=False)[0, :, :]
         view = np.chararray(cars.shape, unicode=True, itemsize=3)
         view[self.world.total_occupancies.nonzero()] = '~'
         for car in self.cars:
