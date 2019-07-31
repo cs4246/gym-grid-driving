@@ -18,6 +18,7 @@ AgentState = Enum('AgentState', 'alive crashed finished out')
 
 LaneSpec = namedtuple('LaneSpec', ['cars', 'speed_range'])
 GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent', 'finish_position', 'occupancy_trails'])
+MaskSpec = namedtuple('MaskSpec', ['type', 'radius'])
 
 
 class Constant:
@@ -81,6 +82,9 @@ class Rectangle(object):
     def __init__(self, w, h, x=0, y=0):
         self.w, self.h = w, h
         self.x, self.y = x, y
+
+    def sample_point(self):
+        return Point(random.randint(self.x, self.x + self.w), random.randint(self.y, self.y + self.h))
 
     def bound(self, point, bound_x=True, bound_y=True):
         x = np.minimum(np.maximum(point.x, self.x), self.x + self.w - 1) if bound_x else point.x
@@ -236,13 +240,34 @@ class OrderedLane(object):
         view[np.where(view == '')] = '-'
         return ' '.join('%03s' % i for i in view)
 
+
+class Mask(object):
+    def __init__(self, type, radius, boundary=None):
+        assert type in ['follow', 'random']
+        self.type = type
+        self.radius = radius
+        if self.type == 'random' and not boundary:
+            raise Exception('Boundary must be defined for type: random')
+        self.boundary = boundary
+
+    def step(self, target=None):
+        self.target = target
+        if self.type == 'follow' and not self.target:
+            raise Exception('Target must be defined for type: follow')
+        if self.type == 'random':
+            self.target = self.boundary.sample_point()
+        return self
+
+    def get(self):
+        return Rectangle(self.radius * 2, self.radius * 2, self.target.x - self.radius, self.target.y - self.radius)
         
 
 class World(object):
-    def __init__(self, boundary, finish_position=None, flicker_rate=0.0):
+    def __init__(self, boundary, finish_position=None, flicker_rate=0.0, mask=None):
         self.boundary = boundary
         self.finish_position = finish_position
         self.flicker_rate = flicker_rate
+        self.mask = Mask(mask.type, mask.radius, self.boundary) if mask else None
 
     def init(self, cars, agent=None):
         self.cars = cars
@@ -253,6 +278,9 @@ class World(object):
             self.lanes[car.position.y].append(car)
         self.occupancy_trails = np.zeros((self.boundary.w, self.boundary.h))
         self.blackout = False
+        if self.mask:
+            self.mask.step(self.agent.position)
+        self.update_state()
 
     def reassign_lanes(self):
         unassigned_cars = []
@@ -265,6 +293,7 @@ class World(object):
             self.lanes[car.position.y].append(car)
 
     def step(self, action=None):
+        exception = None
         try:
             for car in self.cars:
                 if car == self.agent:
@@ -307,9 +336,18 @@ class World(object):
                 car.done()
 
             self.blackout = random.random_sample() <= self.flicker_rate
+
+            if self.mask:
+                self.mask.step(self.agent.position)
+
         except Exception as e:
             self.blackout = False
-            raise e
+            self.mask = None
+            exception = e
+        finally:
+            self.update_state()
+            if exception:
+                raise exception
 
     def as_tensor(self, pytorch=True):
         t = np.zeros(self.tensor_shape)
@@ -331,16 +369,36 @@ class World(object):
         tensor_shape = (c, h, w) if pytorch else self.tensor_shape
         return spaces.Box(low=0, high=1, shape=tensor_shape[int(not channel):], dtype=np.uint8)
 
+    def update_state(self):
+        agent = self.agent
+        other_cars = set(self.cars) - set([self.agent])
+        finish_position = self.finish_position
+        occupancy_trails = self.occupancy_trails
+
+        if self.mask:
+            mask = self.mask.get()
+            agent = agent if mask.contains(agent.position) else None
+            other_cars = set([car for car in list(other_cars) if mask.contains(car.position)])
+            finish_position = finish_position if mask.contains(finish_position) else None
+            occupancy_trails_mask = np.full(self.occupancy_trails.shape, False)
+            occupancy_trails_mask[mask.x:mask.x+mask.w, mask.y:mask.y+mask.h] = True
+            occupancy_trails[~occupancy_trails_mask] = 0.0
+
+        if self.blackout:
+            agent = None
+            other_cars = set([])
+            finish_position = None
+            occupancy_trails = np.zeros(self.occupancy_trails.shape)
+
+        self._state = GridDrivingState(other_cars, agent, finish_position, occupancy_trails)
+
     @property
     def tensor_state(self):
         return self.as_tensor()
 
     @property
     def state(self):
-        if self.blackout:
-            return GridDrivingState(set([]), ActionableCar(Point(self.boundary.x - 1, self.boundary.y - 1), [None, None], None), 
-                                    Point(self.boundary.x - 1, self.boundary.y - 1), np.zeros(self.occupancy_trails.shape))
-        return GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.occupancy_trails)
+        return self._state
 
     @property
     def tensor_shape(self):
@@ -367,8 +425,10 @@ class GridDrivingEnv(gym.Env):
 
         self.flicker_rate = kwargs.get('flicker_rate', 0.0)
 
+        self.mask_spec = kwargs.get('mask', None)
+
         self.boundary = Rectangle(self.width, len(self.lanes))
-        self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate)
+        self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate, mask=self.mask_spec)
 
         agent_direction = np.sign(self.agent_speed_range[0])
         self.actions = [Action('up', Point(agent_direction,-1)), Action('down', Point(agent_direction,1))]

@@ -37,7 +37,7 @@ for i in range(12):
 ```
 import gym
 import gym_grid_driving
-from gym_grid_driving.envs.grid_driving import LaneSpec, Point
+from gym_grid_driving.envs.grid_driving import LaneSpec, MaskSpec, Point
 
 lanes = [
     LaneSpec(2, [-1, -1]),
@@ -47,7 +47,7 @@ lanes = [
 
 env = gym.make('GridDriving-v0', lanes=lanes, width=8, 
                agent_speed_range=(-3,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
-               stochasticity=1.0, tensor_state=False, flicker_rate=0.5, random_seed=13)
+               stochasticity=1.0, tensor_state=False, flicker_rate=0.5, mask=MaskSpec('follow', 2), random_seed=13)
 
 actions = env.actions
 
@@ -67,6 +67,7 @@ env.render()
 * `tensor_state` whether to output state as 3D tensor `[channel, height, width]` with `channel=[cars, agent, finish_position, occupancy_trails]`
 * `random_seed` to make the environment reproducible
 * `flicker_rate` specifies how often the observation will not be available (blackout)
+* `mask` defines fog of war that accepts `MaskSpec(type, radius)` with the type being `'follow'` or `'random'`. Type follow implies the area visibility to follow the agent whereas random will give random visibility (randomized at every step)
 
 **Notes:** 
 
