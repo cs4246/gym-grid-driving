@@ -17,7 +17,7 @@ random = None
 AgentState = Enum('AgentState', 'alive crashed finished out')
 
 LaneSpec = namedtuple('LaneSpec', ['cars', 'speed_range'])
-GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent_pos', 'finish_pos', 'occupancy_trails'])
+GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent', 'finish_position', 'occupancy_trails'])
 
 
 class Constant:
@@ -105,7 +105,7 @@ class Car(object):
         self.position = position
         self.speed_range = speed_range
         self.world = world
-        self.bound = self.world.boundary.circular_bound if circular else lambda x, **kwargs: x
+        self.bound = self.world.boundary.circular_bound if self.world and self.world.boundary and circular else lambda x, **kwargs: x
         self.auto_brake = auto_brake
         self.auto_lane = auto_lane
         self.p = p
@@ -239,9 +239,10 @@ class OrderedLane(object):
         
 
 class World(object):
-    def __init__(self, boundary, finish_position=None):
+    def __init__(self, boundary, finish_position=None, flicker_rate=0.0):
         self.boundary = boundary
         self.finish_position = finish_position
+        self.flicker_rate = flicker_rate
 
     def init(self, cars, agent=None):
         self.cars = cars
@@ -250,7 +251,8 @@ class World(object):
         self.lanes = [OrderedLane(self) for i in range(self.boundary.h)]
         for car in cars:
             self.lanes[car.position.y].append(car)
-        self.total_occupancies = np.zeros((self.boundary.w, self.boundary.h))
+        self.occupancy_trails = np.zeros((self.boundary.w, self.boundary.h))
+        self.blackout = False
 
     def reassign_lanes(self):
         unassigned_cars = []
@@ -263,56 +265,62 @@ class World(object):
             self.lanes[car.position.y].append(car)
 
     def step(self, action=None):
-        for car in self.cars:
-            if car == self.agent:
-                car.start(action=action)
-                self.lanes[car.lane].recognize()
-            else:
-                car.start()
+        try:
+            for car in self.cars:
+                if car == self.agent:
+                    car.start(action=action)
+                    self.lanes[car.lane].recognize()
+                else:
+                    car.start()
 
-        self.total_occupancies = np.zeros((self.boundary.w, self.boundary.h))
-        for i in range(self.max_dist_travel):
-            occupancies = np.zeros((self.boundary.w, self.boundary.h))
-            for lane in self.lanes:
-                for car in lane.ordered_cars:
-                    last_y = car.position.y
+            self.occupancy_trails = np.zeros((self.boundary.w, self.boundary.h))
+            for i in range(self.max_dist_travel):
+                occupancies = np.zeros((self.boundary.w, self.boundary.h))
+                for lane in self.lanes:
+                    for car in lane.ordered_cars:
+                        last_y = car.position.y
 
-                    car.step()
+                        car.step()
 
-                    if car != self.agent:
-                        occupancies[car.position.x, car.position.y] = 1
-                        
-                    if last_y != car.position.y:
-                        self.reassign_lanes()
+                        if car != self.agent:
+                            occupancies[car.position.x, car.position.y] = 1
+                            
+                        if last_y != car.position.y:
+                            self.reassign_lanes()
 
-            # Handle car jump pass through other car
-            if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
-                raise AgentCrashedException
+                # Handle car jump pass through other car
+                if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
+                    raise AgentCrashedException
 
-            # Handle car jump pass through finish
-            if self.agent and self.finish_position and self.agent.position == self.finish_position:
-                raise AgentFinishedException
+                # Handle car jump pass through finish
+                if self.agent and self.finish_position and self.agent.position == self.finish_position:
+                    raise AgentFinishedException
 
-            self.total_occupancies = np.clip(self.total_occupancies + occupancies, 0, 1)
+                self.occupancy_trails = np.clip(self.occupancy_trails + occupancies, 0, 1)
 
-        if self.agent and self.total_occupancies[self.agent.position.x, self.agent.position.y] > 0:
-                raise AgentCrashedException
-        if self.agent and not self.boundary.contains(self.agent.position):
-            raise AgentOutOfBoundaryException
+            if self.agent and self.occupancy_trails[self.agent.position.x, self.agent.position.y] > 0:
+                    raise AgentCrashedException
+            if self.agent and not self.boundary.contains(self.agent.position):
+                raise AgentOutOfBoundaryException
 
-        for car in self.cars:
-            car.done()
+            for car in self.cars:
+                car.done()
+
+            self.blackout = random.random_sample() <= self.flicker_rate
+        except Exception as e:
+            self.blackout = False
+            raise e
 
     def as_tensor(self, pytorch=True):
         t = np.zeros(self.tensor_shape)
-        for car in self.cars:
-            if self.agent and car != self.agent:
+        for car in self.state.cars:
+            if self.state.agent and car != self.state.agent:
                 t[0, car.position.x, car.position.y] = 1
-        if self.agent:
-            t[1, self.agent.position.x, self.agent.position.y] = 1
-        if self.finish_position:
-            t[2, self.finish_position.x, self.finish_position.y] = 1
-        t[3, :, :] = self.total_occupancies
+        if self.state.agent:
+            t[1, self.state.agent.position.x, self.state.agent.position.y] = 1
+        if self.state.finish_position:
+            t[2, self.state.finish_position.x, self.state.finish_position.y] = 1
+        t[3, :, :] = self.state.occupancy_trails
         if pytorch:
             t = np.transpose(t, (0, 2, 1)) # [C, H, W]
         assert t.shape == self.space(pytorch).shape
@@ -322,6 +330,17 @@ class World(object):
         c, w, h = self.tensor_shape
         tensor_shape = (c, h, w) if pytorch else self.tensor_shape
         return spaces.Box(low=0, high=1, shape=tensor_shape[int(not channel):], dtype=np.uint8)
+
+    @property
+    def tensor_state(self):
+        return self.as_tensor()
+
+    @property
+    def state(self):
+        if self.blackout:
+            return GridDrivingState(set([]), ActionableCar(Point(self.boundary.x - 1, self.boundary.y - 1), [None, None], None), 
+                                    Point(self.boundary.x - 1, self.boundary.y - 1), np.zeros(self.occupancy_trails.shape))
+        return GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.occupancy_trails)
 
     @property
     def tensor_shape(self):
@@ -346,8 +365,10 @@ class GridDrivingEnv(gym.Env):
         self.p = kwargs.get('stochasticity', DefaultConfig.STOCHASTICITY)
         self.tensor_state = kwargs.get('tensor_state', False)
 
+        self.flicker_rate = kwargs.get('flicker_rate', 0.0)
+
         self.boundary = Rectangle(self.width, len(self.lanes))
-        self.world = World(self.boundary, finish_position=self.finish_position)
+        self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate)
 
         agent_direction = np.sign(self.agent_speed_range[0])
         self.actions = [Action('up', Point(agent_direction,-1)), Action('down', Point(agent_direction,1))]
@@ -396,9 +417,9 @@ class GridDrivingEnv(gym.Env):
             reward = Constant.FINISH_REWARD
 
         if self.tensor_state:
-            self.state = self.world.as_tensor()
+            self.state = self.world.tensor_state
         else:
-            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.world.total_occupancies)
+            self.state = self.world.state
 
         return self.state, reward, self.done, {}
 
@@ -417,9 +438,9 @@ class GridDrivingEnv(gym.Env):
         self.world.init(self.cars, agent=self.agent)
 
         if self.tensor_state:
-            self.state = self.world.as_tensor()
+            self.state = self.world.tensor_state
         else:
-            self.state = GridDrivingState(set(self.cars) - set([self.agent]), self.agent, self.finish_position, self.world.total_occupancies)
+            self.state = self.world.state
 
         return self.state
 
@@ -428,16 +449,17 @@ class GridDrivingEnv(gym.Env):
             raise NotImplementedError
         cars = self.world.as_tensor(pytorch=False)[0, :, :]
         view = np.chararray(cars.shape, unicode=True, itemsize=3)
-        view[self.world.total_occupancies.nonzero()] = '~'
-        for car in self.cars:
-            if car != self.agent:
+        view[self.world.state.occupancy_trails.nonzero()] = '~'
+        for car in self.world.state.cars:
+            if car != self.world.state.agent:
                 view[car.position.tuple] = car.id or 'O'
-        view[self.finish_position.tuple] += 'F'
-        if self.boundary.contains(self.agent.position):
+        if self.world.state.finish_position and self.boundary.contains(self.world.state.finish_position):
+            view[self.world.state.finish_position.tuple] += 'F'
+        if self.world.state.agent and self.boundary.contains(self.world.state.agent.position):
             if self.agent_state == AgentState.crashed:
-                view[self.agent.position.tuple] += '#'
+                view[self.world.state.agent.position.tuple] += '#'
             else:
-                view[self.agent.position.tuple] += '<'
+                view[self.world.state.agent.position.tuple] += '<'
         view[np.where(view == '')] = '-'
         view = np.transpose(view)
         print(''.join('====' for i in view[0]))

@@ -47,7 +47,7 @@ lanes = [
 
 env = gym.make('GridDriving-v0', lanes=lanes, width=8, 
                agent_speed_range=(-3,-1), finish_position=Point(0,1), agent_pos_init=Point(6,1),
-               stochasticity=1.0, tensor_state=False, random_seed=13)
+               stochasticity=1.0, tensor_state=False, flicker_rate=0.5, random_seed=13)
 
 actions = env.actions
 
@@ -66,6 +66,7 @@ env.render()
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
 * `tensor_state` whether to output state as 3D tensor `[channel, height, width]` with `channel=[cars, agent, finish_position, occupancy_trails]`
 * `random_seed` to make the environment reproducible
+* `flicker_rate` specifies how often the observation will not be available (blackout)
 
 **Notes:** 
 
