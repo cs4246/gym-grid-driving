@@ -361,13 +361,37 @@ class World(object):
         t[3, :, :] = self.state.occupancy_trails
         if pytorch:
             t = np.transpose(t, (0, 2, 1)) # [C, H, W]
-        assert t.shape == self.space(pytorch).shape
+        assert t.shape == self.tensor_space(pytorch).shape
         return t
 
-    def space(self, pytorch=True, channel=True):
+    def as_vector(self, speed=True):
+        v = [self.state.agent.position.x, self.state.agent.position.y]
+        if speed:
+            v += self.state.agent.speed_range
+        v += [self.state.finish_position.x, self.state.finish_position.y]
+        for car in self.state.cars:
+            if self.state.agent and car != self.state.agent:
+                v += [car.position.x, car.position.y]
+                if speed:
+                    v += car.speed_range
+        v += self.state.occupancy_trails.flatten().tolist()
+        v = np.array(v)
+        assert v.shape == self.vector_space(speed).shape
+        return v
+
+    def tensor_space(self, pytorch=True, channel=True):
         c, w, h = self.tensor_shape
         tensor_shape = (c, h, w) if pytorch else self.tensor_shape
         return spaces.Box(low=0, high=1, shape=tensor_shape[int(not channel):], dtype=np.uint8)
+
+    def vector_space(self, speed=True):
+        bxl, bxh = self.boundary.x, self.boundary.x + self.boundary.w
+        byl, byh = self.boundary.y, self.boundary.y + self.boundary.h
+        low_car_stats = [bxl, byl] * (2 if speed else 1)
+        high_car_stats = [bxh, byh] * (2 if speed else 1)
+        low = np.array(low_car_stats * len(self.cars) + [bxl, byl] + [0] * self.boundary.w * self.boundary.h)
+        high = np.array(high_car_stats * len(self.cars) + [bxh, byh] + [1] * self.boundary.w * self.boundary.h)
+        return spaces.Box(low, high, dtype=np.float32)
 
     def update_state(self):
         agent = self.agent
@@ -397,6 +421,10 @@ class World(object):
         return self.as_tensor()
 
     @property
+    def vector_state(self):
+        return self.as_vector()
+
+    @property
     def state(self):
         return self._state
 
@@ -421,7 +449,8 @@ class GridDrivingEnv(gym.Env):
         self.agent_pos_init = kwargs.get('agent_pos_init', Point(self.width-1, len(self.lanes)-1))
 
         self.p = kwargs.get('stochasticity', DefaultConfig.STOCHASTICITY)
-        self.tensor_state = kwargs.get('tensor_state', False)
+        self.observation_type = kwargs.get('observation_type', 'state')
+        assert self.observation_type in ['state', 'tensor', 'vector']
 
         self.flicker_rate = kwargs.get('flicker_rate', 0.0)
 
@@ -436,16 +465,6 @@ class GridDrivingEnv(gym.Env):
                             for i in range(self.agent_speed_range[0], self.agent_speed_range[1]+1)]
 
         self.action_space = spaces.Discrete(len(self.actions))
-        if self.tensor_state:
-            self.observation_space = self.world.space()
-        else:
-            n_cars = sum([l.cars for l in self.lanes])
-            self.observation_space = spaces.Dict({
-                'cars': spaces.Tuple(tuple([self.world.space(channel=False) for i in range(n_cars)])),
-                'agent_pos': self.world.space(channel=False), 
-                'finish_pos': self.world.space(channel=False), 
-                'occupancy_trails': spaces.MultiBinary(self.world.space(channel=False).shape)
-            })
 
         self.reset()
 
@@ -458,6 +477,7 @@ class GridDrivingEnv(gym.Env):
         if isinstance(action, int):
             assert action in range(len(self.actions))
             action = self.actions[action]
+        assert isinstance(action, Action)
 
         reward = 0
 
@@ -476,10 +496,7 @@ class GridDrivingEnv(gym.Env):
             self.agent_state = AgentState.finished
             reward = Constant.FINISH_REWARD
 
-        if self.tensor_state:
-            self.state = self.world.tensor_state
-        else:
-            self.state = self.world.state
+        self.update_state()
 
         return self.state, reward, self.done, {}
 
@@ -497,12 +514,33 @@ class GridDrivingEnv(gym.Env):
                 i += 1
         self.world.init(self.cars, agent=self.agent)
 
-        if self.tensor_state:
+        self.update_observation_space()
+
+        self.update_state()
+
+        return self.state
+
+    def update_state(self):
+        if self.observation_type == 'tensor':
             self.state = self.world.tensor_state
+        elif self.observation_type == 'vector':
+            self.state = self.world.vector_state
         else:
             self.state = self.world.state
 
-        return self.state
+    def update_observation_space(self):
+        if self.observation_type == 'tensor':
+            self.observation_space = self.world.tensor_space()
+        elif self.observation_type == 'vector':
+            self.observation_space = self.world.vector_space()
+        else:
+            n_cars = sum([l.cars for l in self.lanes])
+            self.observation_space = spaces.Dict({
+                'cars': spaces.Tuple(tuple([self.world.tensor_space(channel=False) for i in range(n_cars)])),
+                'agent_pos': self.world.tensor_space(channel=False), 
+                'finish_pos': self.world.tensor_space(channel=False), 
+                'occupancy_trails': spaces.MultiBinary(self.world.tensor_space(channel=False).shape)
+            })
 
     def render(self, mode='human'):
         if mode != 'human':

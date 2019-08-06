@@ -64,7 +64,7 @@ env.render()
 * `env.actions` is an enum containing all available actions which would change depending on the `agent_speed_range`
 * `env.action_space` is the OpenAI gym action space that can be sampled, with the definitions defined in `env.actions`
 * Degree of stochasticity `stochasticity` with `1.0` being fully-stochastic and `0.0` being fully-deterministic
-* `tensor_state` whether to output state as 3D tensor `[channel, height, width]` with `channel=[cars, agent, finish_position, occupancy_trails]`
+* `observation_type` which can be either `'state'`, `'tensor'`, or `'vector'` whether to output state as it is, as 3D tensor `[channel, height, width]` with `channel=[cars, agent, finish_position, occupancy_trails]`, or vector.
 * `random_seed` to make the environment reproducible
 * `flicker_rate` specifies how often the observation will not be available (blackout)
 * `mask` defines fog of war that accepts `MaskSpec(type, radius)` with the type being `'follow'` or `'random'`. Type follow implies the area visibility to follow the agent whereas random will give random visibility (randomized at every step)
