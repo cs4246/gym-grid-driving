@@ -23,6 +23,8 @@ MaskSpec = namedtuple('MaskSpec', ['type', 'radius'])
 
 class Constant:
     FINISH_REWARD = 10
+    MISSED_REWARD = 0
+    CRASH_REWARD = 0
 
 
 class DefaultConfig:
@@ -490,8 +492,10 @@ class GridDrivingEnv(gym.Env):
             self.world.step(action)
         except AgentCrashedException:
             self.agent_state = AgentState.crashed
+            reward = Constant.CRASH_REWARD
         except AgentOutOfBoundaryException:
             self.agent_state = AgentState.out
+            reward = Constant.MISSED_REWARD
         except AgentFinishedException:
             self.agent_state = AgentState.finished
             reward = Constant.FINISH_REWARD
