@@ -22,9 +22,10 @@ MaskSpec = namedtuple('MaskSpec', ['type', 'radius'])
 
 
 class Constant:
-    FINISH_REWARD = 10
-    MISSED_REWARD = 0
-    CRASH_REWARD = 0
+    FINISH_REWARD   = 100
+    MISSED_REWARD   = -5
+    CRASH_REWARD    = -20
+    TIMESTEP_REWARD = -1
 
 
 class DefaultConfig:
@@ -74,6 +75,12 @@ class Point(object):
 
     def __str__(self):
         return "Point(x={},y={})".format(self.x, self.y)
+      
+    def __repr__(self):
+        return str(self)
+      
+    def __hash__(self):
+        return hash(str(self))
 
     @property
     def tuple(self):
@@ -444,6 +451,56 @@ class World(object):
         return (4, self.boundary.w, self.boundary.h)
 
 
+def get_range(remaining_step, current_number, target_number, step_size):
+    distance = target_number - current_number
+    
+    min_range = distance - step_size * (remaining_step - 1)
+    max_range = distance + step_size * (remaining_step - 1)
+    
+    min_range = max(min_range, -step_size)
+    min_range = min(min_range, step_size)
+    
+    max_range = max(max_range, -step_size)
+    max_range = min(max_range, step_size)
+    
+    return (min_range, max_range)
+
+def get_trajectory(start, end, direction, step_size, boundary=None):
+    assert step_size > 0 and abs(direction) in range(1, 2)
+    trajectory = [start]
+    x = start.x
+    y = start.y
+    while True:
+        remaining_step = abs(end.x - x)
+        if remaining_step <= 0:
+            break
+        a, b = get_range(remaining_step, y, end.y, step_size)
+        diff = random.randint(a, b+1)
+        x += direction
+        y += diff
+        new = Point(x, y)
+        if boundary:
+            new = boundary.bound(new)
+        trajectory.append(new)
+    return trajectory
+  
+def sample_points_outside(points, boundary, ns):
+    used_points = [] + points
+    all_points = []
+    for i in range(boundary.w):
+        for j in range(boundary.h):
+            x = i + boundary.x
+            y = j + boundary.y
+            all_points.append(Point(x, y))
+    result = []
+    for y, n in ns:
+        intersection = list(set(all_points) - set(used_points))
+        candidates = [p for p in intersection if p.y == y]
+        points = np.random.choice(candidates, n).tolist()
+        used_points += points
+        result.append(points)
+    return result
+
 
 class GridDrivingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
@@ -466,6 +523,8 @@ class GridDrivingEnv(gym.Env):
         self.flicker_rate = kwargs.get('flicker_rate', 0.0)
 
         self.mask_spec = kwargs.get('mask', None)
+
+        self.ensure_initial_solvable = kwargs.get('ensure_initial_solvable', True)
 
         self.boundary = Rectangle(self.width, len(self.lanes))
         self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate, mask=self.mask_spec)
@@ -499,6 +558,7 @@ class GridDrivingEnv(gym.Env):
 
         try:
             self.world.step(action)
+            reward = Constant.TIMESTEP_REWARD
         except AgentCrashedException:
             self.agent_state = AgentState.crashed
             reward = Constant.CRASH_REWARD
@@ -513,18 +573,38 @@ class GridDrivingEnv(gym.Env):
 
         return self.state, reward, self.done, {}
 
-    def reset(self):
-        self.seed(self.random_seed)
-        self.agent_state = AgentState.alive
-        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
-        self.cars = [self.agent]
+    def distribute_cars(self):
+        cars = []
         i = 0
         for y, lane in enumerate(self.lanes):
             choices = list(range(0, self.agent.position.x)) + list(range(self.agent.position.x+1, self.width)) if self.agent.lane == y else range(self.width)
             xs = random.choice(choices, lane.cars, replace=False)
             for x in xs:
-                self.cars.append(Car(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
+                cars.append(Car(Point(x,y), lane.speed_range, self.world, p=self.p, id=i))
                 i += 1
+        return cars
+
+    def distribute_cars_solvable(self):
+        cars = []
+        trajectory = get_trajectory(self.agent.position, self.finish_position, self.agent.direction, 1, self.boundary)
+        points = sample_points_outside(trajectory, self.boundary, [(y, lane.cars) for y, lane in enumerate(self.lanes)])
+        i = 0
+        for y, lane in enumerate(self.lanes):
+            for point in points[y]:
+                cars.append(Car(point, lane.speed_range, self.world, p=self.p, id=i))
+                i += 1
+        return cars
+
+    def reset(self):
+        self.seed(self.random_seed)
+        self.agent_state = AgentState.alive
+        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
+        self.cars = [self.agent]
+        if self.ensure_initial_solvable:
+            self.cars += self.distribute_cars_solvable()
+        else:
+            self.cars += self.distribute_cars()
+        
         self.world.init(self.cars, agent=self.agent)
 
         self.update_observation_space()
