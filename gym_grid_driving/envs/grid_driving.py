@@ -117,6 +117,7 @@ class Car(object):
         self.p = p
         self.done()
         self.ignored = False
+        self.speed = 0
 
     def sample_speed(self):
         if random.random_sample() > self.p:
@@ -129,7 +130,8 @@ class Car(object):
         self.changed_lane = self.destination.y != self.position.y
 
     def start(self, **kwargs):
-        self._start(delta=Point(self.sample_speed(), 0))
+        self.speed = self.sample_speed()
+        self._start(delta=Point(self.speed, 0))
 
     def done(self):
         self.destination = None
@@ -366,19 +368,20 @@ class World(object):
         assert t.shape == self.tensor_space(pytorch).shape
         return t
 
-    def as_vector(self, speed=True):
+    def as_vector(self, speed=True, trail=False):
         v = [self.state.agent.position.x, self.state.agent.position.y]
         if speed:
-            v += self.state.agent.speed_range
+            v += [self.state.agent.speed]
         v += [self.state.finish_position.x, self.state.finish_position.y]
         for car in self.state.cars:
             if self.state.agent and car != self.state.agent:
                 v += [car.position.x, car.position.y]
                 if speed:
-                    v += car.speed_range
-        v += self.state.occupancy_trails.flatten().tolist()
+                    v += [car.speed]
+        if trail:
+            v += self.state.occupancy_trails.flatten().tolist()
         v = np.array(v)
-        assert v.shape == self.vector_space(speed).shape
+        assert v.shape == self.vector_space(speed, trail).shape
         return v
 
     def tensor_space(self, pytorch=True, channel=True):
@@ -386,14 +389,20 @@ class World(object):
         tensor_shape = (c, h, w) if pytorch else self.tensor_shape
         return spaces.Box(low=0, high=1, shape=tensor_shape[int(not channel):], dtype=np.uint8)
 
-    def vector_space(self, speed=True):
+    def vector_space(self, speed=True, trail=False):
         bxl, bxh = self.boundary.x, self.boundary.x + self.boundary.w
         byl, byh = self.boundary.y, self.boundary.y + self.boundary.h
-        low_car_stats = [bxl, byl] * (2 if speed else 1)
-        high_car_stats = [bxh, byh] * (2 if speed else 1)
-        low = np.array(low_car_stats * len(self.cars) + [bxl, byl] + [0] * self.boundary.w * self.boundary.h)
-        high = np.array(high_car_stats * len(self.cars) + [bxh, byh] + [1] * self.boundary.w * self.boundary.h)
-        return spaces.Box(low, high, dtype=np.float32)
+        low_car_stats = [bxl, byl]
+        high_car_stats = [bxh, byh]
+        if speed:
+            low_car_stats += [bxl]
+            high_car_stats += [bxh]
+        low = low_car_stats * len(self.cars) + [bxl, byl]
+        high = high_car_stats * len(self.cars) + [bxh, byh]
+        if trail:
+            low += [0] * self.boundary.w * self.boundary.h
+            high += [1] * self.boundary.w * self.boundary.h
+        return spaces.Box(np.array(low), np.array(high), dtype=np.float32)
 
     def update_state(self):
         agent = self.agent
