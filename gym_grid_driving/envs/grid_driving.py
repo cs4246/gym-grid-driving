@@ -113,7 +113,7 @@ class Rectangle(object):
 
 
 class Car(object):
-    def __init__(self, position, speed_range, world, circular=True, auto_brake=True, auto_lane=True, p=1.0, id=None):
+    def __init__(self, position, speed_range, world, circular=True, auto_brake=True, auto_lane=True, p=1.0, id=None, ignore=False):
         self.id = id
         self.position = position
         self.speed_range = speed_range
@@ -123,7 +123,8 @@ class Car(object):
         self.auto_lane = auto_lane
         self.p = p
         self.done()
-        self.ignored = False
+        self.ignore = ignore
+        self.ignored = self.ignore
         self.speed = 0
 
     def sample_speed(self):
@@ -198,7 +199,7 @@ class ActionableCar(Car):
     def start(self, **kwargs):
         action = kwargs.get('action')
         self._start(delta=action.delta)
-        self.ignored = self.changed_lane
+        self.ignored = self.ignore or self.changed_lane
 
 
 class OrderedLane(object):
@@ -524,7 +525,9 @@ class GridDrivingEnv(gym.Env):
 
         self.mask_spec = kwargs.get('mask', None)
 
-        self.ensure_initial_solvable = kwargs.get('ensure_initial_solvable', True)
+        self.ensure_initial_solvable = kwargs.get('ensure_initial_solvable', False)
+
+        self.agent_ignore = kwargs.get('agent_ignore', False)
 
         self.boundary = Rectangle(self.width, len(self.lanes))
         self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate, mask=self.mask_spec)
@@ -598,7 +601,8 @@ class GridDrivingEnv(gym.Env):
     def reset(self):
         self.seed(self.random_seed)
         self.agent_state = AgentState.alive
-        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, p=self.p, id='<')
+        self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, 
+                                    p=self.p, id='<', ignore=self.agent_ignore)
         self.cars = [self.agent]
         if self.ensure_initial_solvable:
             self.cars += self.distribute_cars_solvable()
