@@ -7,6 +7,8 @@ import numpy as np
 from collections import namedtuple
 from enum import Enum
 
+import copy
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,7 @@ random = None
 AgentState = Enum('AgentState', 'alive crashed finished out')
 
 LaneSpec = namedtuple('LaneSpec', ['cars', 'speed_range'])
-GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent', 'finish_position', 'occupancy_trails'])
+GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent', 'finish_position', 'occupancy_trails', 'agent_state'])
 MaskSpec = namedtuple('MaskSpec', ['type', 'radius'])
 
 
@@ -292,6 +294,14 @@ class World(object):
         self.blackout = False
         if self.mask:
             self.mask.step(self.agent.position)
+        self.agent_state = AgentState.alive
+        self.update_state()
+
+    def load(self, state):
+        self.init(state.cars.union(set([state.agent])), agent=state.agent)
+        self.finish_position = state.finish_position
+        self.occupancy_trails = state.occupancy_trails
+        self.agent_state = state.agent_state
         self.update_state()
 
     def reassign_lanes(self):
@@ -331,17 +341,21 @@ class World(object):
 
                 # Handle car jump pass through other car
                 if self.agent and occupancies[self.agent.position.x, self.agent.position.y] > 0:
+                    self.agent_state = AgentState.crashed
                     raise AgentCrashedException
 
                 # Handle car jump pass through finish
                 if self.agent and self.finish_position and self.agent.position == self.finish_position:
+                    self.agent_state = AgentState.finished
                     raise AgentFinishedException
 
                 self.occupancy_trails = np.clip(self.occupancy_trails + occupancies, 0, 1)
 
             if self.agent and self.occupancy_trails[self.agent.position.x, self.agent.position.y] > 0:
+                    self.agent_state = AgentState.crashed
                     raise AgentCrashedException
             if self.agent and not self.boundary.contains(self.agent.position):
+                self.agent_state = AgentState.out
                 raise AgentOutOfBoundaryException
 
             for car in self.cars:
@@ -417,6 +431,7 @@ class World(object):
         other_cars = set(self.cars) - set([self.agent])
         finish_position = self.finish_position
         occupancy_trails = self.occupancy_trails
+        agent_state = self.agent_state 
 
         if self.mask:
             mask = self.mask.get()
@@ -433,7 +448,10 @@ class World(object):
             finish_position = None
             occupancy_trails = np.zeros(self.occupancy_trails.shape)
 
-        self._state = GridDrivingState(other_cars, agent, finish_position, occupancy_trails)
+        def cp(data):
+            return copy.deepcopy(data)
+
+        self._state = GridDrivingState(cp(other_cars), cp(agent), cp(finish_position), cp(occupancy_trails), cp(agent_state))
 
     @property
     def tensor_state(self):
@@ -546,7 +564,7 @@ class GridDrivingEnv(gym.Env):
         random, seed = seeding.np_random(seed)
         return [seed]
 
-    def step(self, action):
+    def _step(self, action):
         if isinstance(action, int):
             assert action in range(len(self.actions))
             action = self.actions[action]
@@ -563,18 +581,32 @@ class GridDrivingEnv(gym.Env):
             self.world.step(action)
             reward = Constant.TIMESTEP_REWARD
         except AgentCrashedException:
-            self.agent_state = AgentState.crashed
             reward = Constant.CRASH_REWARD
         except AgentOutOfBoundaryException:
-            self.agent_state = AgentState.out
             reward = Constant.MISSED_REWARD
         except AgentFinishedException:
-            self.agent_state = AgentState.finished
             reward = Constant.FINISH_REWARD
 
         self.update_state()
 
         return self.state, reward, self.done, {}
+
+    def step(self, action, state=None):
+        if state is not None:
+            self.load_state(state)
+        return self._step(action)
+
+    def load_state(self, state):
+        if not isinstance(state, GridDrivingState):
+            raise NotImplementedError
+
+        self.world.load(state)
+
+        self.update_observation_space()
+        self.update_state()
+
+        return self.state
+
 
     def distribute_cars(self):
         cars = []
@@ -600,7 +632,6 @@ class GridDrivingEnv(gym.Env):
 
     def reset(self):
         self.seed(self.random_seed)
-        self.agent_state = AgentState.alive
         self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, 
                                     p=self.p, id='<', ignore=self.agent_ignore)
         self.cars = [self.agent]
@@ -651,7 +682,7 @@ class GridDrivingEnv(gym.Env):
         if self.world.state.finish_position and self.boundary.contains(self.world.state.finish_position):
             view[self.world.state.finish_position.tuple] += 'F'
         if self.world.state.agent and self.boundary.contains(self.world.state.agent.position):
-            if self.agent_state == AgentState.crashed:
+            if self.world.state.agent_state == AgentState.crashed:
                 view[self.world.state.agent.position.tuple] += '#'
             else:
                 view[self.world.state.agent.position.tuple] += '<'
@@ -667,5 +698,5 @@ class GridDrivingEnv(gym.Env):
 
     @property
     def done(self):
-        return self.agent_state != AgentState.alive
+        return self.world.state.agent_state != AgentState.alive
     
