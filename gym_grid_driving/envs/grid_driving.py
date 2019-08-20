@@ -23,11 +23,18 @@ GridDrivingState = namedtuple('GridDrivingState', ['cars', 'agent', 'finish_posi
 MaskSpec = namedtuple('MaskSpec', ['type', 'radius'])
 
 
-class Constant:
+class DenseReward:
     FINISH_REWARD   = 100
     MISSED_REWARD   = -5
     CRASH_REWARD    = -20
     TIMESTEP_REWARD = -1
+
+
+class SparseReward:
+    FINISH_REWARD   = 10
+    MISSED_REWARD   = 0
+    CRASH_REWARD    = 0
+    TIMESTEP_REWARD = 0
 
 
 class DefaultConfig:
@@ -523,7 +530,6 @@ def sample_points_outside(points, boundary, ns):
 
 class GridDrivingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
-    reward_range = (0, Constant.FINISH_REWARD)
 
     def __init__(self, **kwargs):
         self.random_seed = kwargs.get('random_seed', None)
@@ -546,6 +552,10 @@ class GridDrivingEnv(gym.Env):
         self.ensure_initial_solvable = kwargs.get('ensure_initial_solvable', False)
 
         self.agent_ignore = kwargs.get('agent_ignore', False)
+
+        self.rewards = kwargs.get('rewards', SparseReward)
+        rewards = [self.rewards.TIMESTEP_REWARD, self.rewards.CRASH_REWARD, self.rewards.MISSED_REWARD, self.rewards.FINISH_REWARD]
+        self.reward_range = (min(rewards), max(rewards))
 
         self.boundary = Rectangle(self.width, len(self.lanes))
         self.world = World(self.boundary, finish_position=self.finish_position, flicker_rate=self.flicker_rate, mask=self.mask_spec)
@@ -579,13 +589,13 @@ class GridDrivingEnv(gym.Env):
 
         try:
             self.world.step(action)
-            reward = Constant.TIMESTEP_REWARD
+            reward = self.rewards.TIMESTEP_REWARD
         except AgentCrashedException:
-            reward = Constant.CRASH_REWARD
+            reward = self.rewards.CRASH_REWARD
         except AgentOutOfBoundaryException:
-            reward = Constant.MISSED_REWARD
+            reward = self.rewards.MISSED_REWARD
         except AgentFinishedException:
-            reward = Constant.FINISH_REWARD
+            reward = self.rewards.FINISH_REWARD
 
         self.update_state()
 
