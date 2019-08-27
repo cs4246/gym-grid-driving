@@ -458,6 +458,8 @@ class World(object):
         def cp(data):
             return copy.deepcopy(data)
 
+        if hasattr(self, '_state'):
+            del self._state
         self._state = GridDrivingState(cp(other_cars), cp(agent), cp(finish_position), cp(occupancy_trails), cp(agent_state))
 
     @property
