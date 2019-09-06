@@ -292,6 +292,7 @@ class World(object):
 
     def init(self, cars, agent=None):
         self.cars = cars
+        self.ordered_cars = sorted(self.cars, key=lambda car: car.position.x + self.boundary.w * car.position.y)
         self.agent = agent
         self.max_dist_travel = np.max([np.max(np.absolute(car.speed_range)) for car in cars])
         self.lanes = [OrderedLane(self) for i in range(self.boundary.h)]
@@ -324,7 +325,7 @@ class World(object):
     def step(self, action=None):
         exception = None
         try:
-            for car in self.cars:
+            for car in self.ordered_cars:
                 if car == self.agent:
                     car.start(action=action)
                     self.lanes[car.lane].recognize()
@@ -365,7 +366,7 @@ class World(object):
                 self.agent_state = AgentState.out
                 raise AgentOutOfBoundaryException
 
-            for car in self.cars:
+            for car in self.ordered_cars:
                 car.done()
 
             self.blackout = random.random_sample() <= self.flicker_rate
@@ -524,7 +525,7 @@ def sample_points_outside(points, boundary, ns):
     for y, n in ns:
         intersection = list(set(all_points) - set(used_points))
         candidates = [p for p in intersection if p.y == y]
-        points = np.random.choice(candidates, n).tolist()
+        points = random.choice(candidates, n).tolist()
         used_points += points
         result.append(points)
     return result
