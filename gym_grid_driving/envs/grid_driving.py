@@ -530,6 +530,14 @@ def sample_points_outside(points, boundary, ns):
         result.append(points)
     return result
 
+def random_speed_range(speed_range):
+    min_speed = random.randint(speed_range[0], speed_range[1]+1)
+    max_speed = random.randint(min_speed, speed_range[1]+1)
+    return [min_speed, max_speed]
+
+def generate_random_lane_speed(lanes):
+    return [LaneSpec(lane.cars, random_speed_range(lane.speed_range)) for lane in lanes]
+
 
 class GridDrivingEnv(gym.Env):
     metadata = {'render.modes': ['human']}
@@ -539,6 +547,9 @@ class GridDrivingEnv(gym.Env):
 
         self.lanes = kwargs.get('lanes', DefaultConfig.LANES)
         self.width = kwargs.get('width', DefaultConfig.WIDTH)
+        self.random_lane_speed = kwargs.get('random_lane_speed', False)
+
+        if self.random_lane_speed: self.lanes_orig = self.lanes
 
         self.agent_speed_range = kwargs.get('agent_speed_range', DefaultConfig.PLAYER_SPEED_RANGE)
         self.finish_position = kwargs.get('finish_position', Point(0, 0))
@@ -645,6 +656,12 @@ class GridDrivingEnv(gym.Env):
 
     def reset(self):
         self.seed(self.random_seed)
+
+        if self.random_lane_speed:
+            self.lanes = generate_random_lane_speed(self.lanes_orig)
+            if self.random_seed is not None:
+                self.random_seed += 1 # increment random seed to get different (but deterministic) lanes
+
         self.agent = ActionableCar(self.agent_pos_init, self.agent_speed_range, self.world, circular=False, auto_brake=False, auto_lane=False, 
                                     p=self.p, id='<', ignore=self.agent_ignore)
         self.cars = [self.agent]
